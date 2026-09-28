@@ -1,16 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChillerEngine } from './ChillerEngine';
 import { arrangementStep } from './arrangement';
-import { AMBIENT_VARIANTS, ambientMelodyEvent, bassFifthNote, chordNotes, makeComposition, textureEvent, type AmbientVariant, type Composition } from './composition';
+import { AMBIENT_VARIANTS, ambientMelodyEvent, bassFifthNote, chordNotes, makeComposition, textureEvent, type Composition } from './composition';
 
 class FakeParam {
   value = 0;
-  setValueAtTime(value: number): this { this.value = value; return this; }
-  linearRampToValueAtTime(value: number): this { this.value = value; return this; }
-  exponentialRampToValueAtTime(value: number): this { this.value = value; return this; }
-  setTargetAtTime(value: number): this { this.value = value; return this; }
+  events: Array<{ kind: string; value: number; time: number }> = [];
+  setValueAtTime(value: number, time: number): this { this.value = value; this.events.push({ kind: 'set', value, time }); return this; }
+  linearRampToValueAtTime(value: number, time: number): this { this.value = value; this.events.push({ kind: 'linear', value, time }); return this; }
+  exponentialRampToValueAtTime(value: number, time: number): this { this.value = value; this.events.push({ kind: 'exponential', value, time }); return this; }
+  setTargetAtTime(value: number, time: number): this { this.value = value; this.events.push({ kind: 'target', value, time }); return this; }
   cancelScheduledValues(): this { return this; }
 }
+
+type FakePeriodicWave = { real: Float32Array; imag: Float32Array };
 
 class FakeNode {
   constructor(private readonly onDisconnect?: (node: FakeNode) => void) {}
@@ -48,6 +51,8 @@ class FakeSource extends FakeNode {
   startedAt?: number;
   stopsAt?: number;
   ended = false;
+  periodicWave: FakePeriodicWave | null = null;
+  setPeriodicWave(wave: FakePeriodicWave): void { this.periodicWave = wave; }
   start(when: number, _offset?: number, duration?: number): void {
     this.startedAt = when;
     this.context.recentStartTimes.push(when);
@@ -95,6 +100,9 @@ class FakeAudioContext {
     const oscillator = this.source();
     this.oscillators.push(oscillator);
     return oscillator;
+  }
+  createPeriodicWave(real: Float32Array, imag: Float32Array): FakePeriodicWave {
+    return { real: real.slice(), imag: imag.slice() };
   }
   createBufferSource(): FakeSource { return this.source(); }
   createBuffer(channels: number, length: number): AudioBuffer {
@@ -292,18 +300,23 @@ describe('ChillerEngine scheduling', () => {
     expect(context.nodes.size).toBe(0);
   });
 
-  it('renders all twelve instrument palettes with varied lead, pad, and space settings', async () => {
-    const signatures = new Set<string>();
-    const leadTypes = new Set<string>();
-    const textureTypes = new Set<string>();
+  it('voices the variants with different harmonic spectra and lead envelope contours', async () => {
+    const spectrum = (source: FakeSource): string => source.periodicWave
+      ? JSON.stringify([Array.from(source.periodicWave.real.slice(1, 9)), Array.from(source.periodicWave.imag.slice(1, 9))])
+      : `native:${source.type}`;
+    const padSpectra = new Set<string>();
+    const leadSpectra = new Set<string>();
+    const textureSpectra = new Set<string>();
+    let decayingLeads = 0;
+    let sustainingLeads = 0;
+    const struckVariants = new Set(['Rain Window', 'Starlit Memory', 'Faded Polaroid', 'Glass Garden', 'Golden Echo']);
     for (let seed = 0; seed < AMBIENT_VARIANTS.length; seed++) {
       const engine = new ChillerEngine();
       (engine as unknown as { composition: Composition }).composition = makeComposition(seed);
       await engine.play();
       const context = FakeAudioContext.instances.at(-1)!;
       const internals = engine as unknown as {
-        sessions: Array<{ chords: FakeNode; melody: FakeNode; textureTone: FakeNode;
-          roomTaps: Array<{ delay: FakeNode; gain: FakeNode }> }>;
+        sessions: Array<{ chords: FakeNode; melody: FakeNode; textureTone: FakeNode }>;
         playChord(session: unknown, notes: number[], at: number, duration: number, energy: number): void;
         playMelody(session: unknown, note: number, at: number, duration: number, energy: number): void;
         playTexture(session: unknown, note: number, at: number, duration: number, energy: number): void;
@@ -312,35 +325,48 @@ describe('ChillerEngine scheduling', () => {
       const at = context.currentTime + 0.3;
       const beforePad = context.oscillators.length;
       internals.playChord(session, [60], at, 2, 1);
-      const pad = context.oscillators.slice(beforePad).map((osc) => [osc.type, osc.detune.value]);
+      const pad = context.oscillators.slice(beforePad);
       expect(pad).toHaveLength(2);
+      pad.forEach((osc) => padSpectra.add(spectrum(osc)));
       const beforeLead = context.oscillators.length;
       internals.playMelody(session, 72, at, 1.2, 1);
       const lead = context.oscillators.slice(beforeLead);
-      const harmonicRatios: Partial<Record<AmbientVariant, number>> = {
-        'Starlit Memory': 2.01, 'Glass Garden': 2.72, 'Golden Echo': 2,
-      };
-      const variant = makeComposition(seed).ambientVariant;
-      expect(lead).toHaveLength(harmonicRatios[variant] ? 2 : 1);
-      if (harmonicRatios[variant]) {
-        expect(lead[1].frequency.value / lead[0].frequency.value).toBeCloseTo(harmonicRatios[variant]);
-        expect(lead[1].type).toBe('sine');
+      expect(lead.length).toBeGreaterThanOrEqual(1);
+      lead.forEach((osc) => leadSpectra.add(spectrum(osc)));
+      const leadTone = lead[0].connections[0].connections[0];
+      if (struckVariants.has(AMBIENT_VARIANTS[seed])) {
+        expect(leadTone.type).toBe('lowpass');
+        const sweep = leadTone.frequency.events;
+        expect(sweep.map((event) => event.kind)).toEqual(['set', 'exponential']);
+        expect(sweep[0].value).toBeGreaterThan(sweep[1].value);
+      } else {
+        expect(leadTone).toBe(session.melody);
       }
-      leadTypes.add(lead[0].type);
+      const leadEnvelope = lead[0].connections[0].gain.events;
+      const peak = Math.max(...leadEnvelope.map((event) => event.value));
+      expect(peak).toBeGreaterThan(0);
+      const peakTime = leadEnvelope.find((event) => event.value === peak)!.time;
+      if (leadEnvelope.some((event) => event.time > peakTime && event.time <= at + 1.2 * 0.8
+        && event.value > 0 && event.value < peak * 0.5)) decayingLeads++;
+      if (leadEnvelope.some((event) => event.time >= at + 1.2 * 0.7 && event.time < at + 1.2 && event.value >= peak * 0.7)) sustainingLeads++;
       const beforeTexture = context.oscillators.length;
       internals.playTexture(session, 84, at, 1.2, 1);
       const texture = context.oscillators.slice(beforeTexture);
       expect(texture).toHaveLength(1);
-      textureTypes.add(texture[0].type);
-      signatures.add(JSON.stringify([pad, lead.map((osc) => [osc.type, osc.frequency.value]), texture[0].type,
-        session.chords.frequency.value, session.melody.frequency.value,
-        session.textureTone.frequency.value, session.roomTaps.map((tap) => tap.delay.delayTime.value)]));
+      textureSpectra.add(spectrum(texture[0]));
+      context.advanceTo(at + 3);
+      expect([...pad, ...lead, ...texture].every((source) => source.disconnected)).toBe(true);
+      if (struckVariants.has(AMBIENT_VARIANTS[seed])) expect(leadTone.disconnected).toBe(true);
+      expect(context.orphanedFinishedSources).toBe(0);
       engine.dispose();
       expect(context.nodes.size).toBe(0);
     }
-    expect(signatures.size).toBe(AMBIENT_VARIANTS.length);
-    expect(leadTypes).toEqual(new Set(['sine', 'triangle']));
-    expect(textureTypes).toEqual(new Set(['sine', 'triangle']));
+    expect(padSpectra.size).toBeGreaterThanOrEqual(4);
+    expect(leadSpectra.size).toBeGreaterThanOrEqual(4);
+    expect(textureSpectra.size).toBeGreaterThanOrEqual(3);
+    expect(new Set([...padSpectra, ...leadSpectra, ...textureSpectra]).size).toBeGreaterThanOrEqual(7);
+    expect(decayingLeads).toBeGreaterThanOrEqual(2);
+    expect(sustainingLeads).toBeGreaterThanOrEqual(2);
   });
 
   it('layers three distinct noise beds through a shared tape tone and drive', async () => {

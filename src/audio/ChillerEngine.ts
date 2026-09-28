@@ -54,7 +54,9 @@ const CROSSFADE_SECONDS = 1;
 const STEPS_PER_BAR = 16;
 const NOISE_BED_LEVEL = 0.85;
 
-type Layer = readonly [OscillatorType, number, number];
+type Timbre = 'sine' | 'triangle' | 'warm' | 'air' | 'flute' | 'reed' | 'hollow' | 'glass' | 'bell' | 'pluck' | 'mallet' | 'shimmer';
+type Layer = readonly [Timbre, number, number];
+type NoteEnvelope = 'sustain' | 'pluck' | 'bell';
 type AmbientSound = {
   chordCutoff: number;
   melodyCutoff: number;
@@ -71,32 +73,48 @@ type AmbientSound = {
   chordLevel: number;
   chordAttack: number;
   chordDecay: boolean;
-  melodyType: OscillatorType;
+  melodyType: Timbre;
+  melodyEnvelope: NoteEnvelope;
   melodyLevel: number;
   melodyAttack: number;
   melodyHarmonic?: readonly [ratio: number, level: number];
-  textureType: OscillatorType;
+  textureType: Timbre;
   textureLevel: number;
   textureAttack: number;
   bassType: OscillatorType;
   bassLevel: number;
 };
 
+// One harmonic recipe per instrument family. PeriodicWave normalizes the
+// peak of each recipe before it reaches the per-voice envelope.
+const HARMONICS: Partial<Record<Timbre, readonly number[]>> = {
+  warm: [1, 0.24, 0.1, 0.04],
+  air: [1, 0.09, 0.2, 0.035, 0.08],
+  flute: [1, 0.06, 0.035, 0.018],
+  reed: [1, 0.56, 0.39, 0.27, 0.16, 0.09],
+  hollow: [1, 0.025, 0.43, 0.015, 0.21, 0.01, 0.08],
+  glass: [1, 0.08, 0.32, 0.035, 0.18, 0.02, 0.1],
+  bell: [1, 0.21, 0.04, 0.19, 0.035, 0.11, 0.015, 0.07],
+  pluck: [1, 0.5, 0.31, 0.19, 0.11, 0.06],
+  mallet: [1, 0.18, 0.065, 0.1, 0.035],
+  shimmer: [1, 0.11, 0.37, 0.04, 0.2, 0.02, 0.14, 0.015, 0.08],
+};
+
 // Each scene has a small but distinct instrument palette. The fixed room taps
 // keep the graph bounded even as tracks change or play for hours.
 const AMBIENT_SOUND: Record<AmbientVariant, AmbientSound> = {
-  'Cloud Drift': { chordCutoff: 1550, melodyCutoff: 1650, bassCutoff: 420, drumLevel: 0.32, noiseCutoff: 2100, noiseLevel: 0.004, textureHighpass: 470, textureCutoff: 1650, roomCutoff: 1900, roomTimes: [0.23, 0.39], roomLevels: [0.14, 0.1], chordLayers: [['sine', -6, 0.72], ['triangle', 6, 0.32]], chordLevel: 0.038, chordAttack: 0.32, chordDecay: false, melodyType: 'sine', melodyLevel: 0.024, melodyAttack: 0.1, textureType: 'sine', textureLevel: 0.033, textureAttack: 0.11, bassType: 'sine', bassLevel: 0.12 },
-  'Rain Window': { chordCutoff: 2200, melodyCutoff: 2050, bassCutoff: 470, drumLevel: 0.26, noiseCutoff: 3000, noiseLevel: 0.007, textureHighpass: 650, textureCutoff: 2500, roomCutoff: 2400, roomTimes: [0.17, 0.34], roomLevels: [0.11, 0.08], chordLayers: [['triangle', -4, 0.58], ['sine', 5, 0.42]], chordLevel: 0.034, chordAttack: 0.045, chordDecay: true, melodyType: 'triangle', melodyLevel: 0.022, melodyAttack: 0.045, textureType: 'sine', textureLevel: 0.027, textureAttack: 0.035, bassType: 'sine', bassLevel: 0.105 },
-  'Dawn Haze': { chordCutoff: 1200, melodyCutoff: 1850, bassCutoff: 380, drumLevel: 0, noiseCutoff: 3800, noiseLevel: 0.003, textureHighpass: 520, textureCutoff: 2600, roomCutoff: 1700, roomTimes: [0.29, 0.46], roomLevels: [0.16, 0.11], chordLayers: [['sine', -8, 0.84], ['triangle', 7, 0.16]], chordLevel: 0.033, chordAttack: 0.65, chordDecay: false, melodyType: 'sine', melodyLevel: 0.019, melodyAttack: 0.22, textureType: 'triangle', textureLevel: 0.025, textureAttack: 0.13, bassType: 'sine', bassLevel: 0.1 },
-  'Blue Hour': { chordCutoff: 1400, melodyCutoff: 2400, bassCutoff: 400, drumLevel: 0, noiseCutoff: 1900, noiseLevel: 0.003, textureHighpass: 840, textureCutoff: 3100, roomCutoff: 2100, roomTimes: [0.28, 0.43], roomLevels: [0.17, 0.12], chordLayers: [['triangle', -7, 0.56], ['sine', 9, 0.38]], chordLevel: 0.034, chordAttack: 0.42, chordDecay: false, melodyType: 'triangle', melodyLevel: 0.018, melodyAttack: 0.16, textureType: 'sine', textureLevel: 0.024, textureAttack: 0.07, bassType: 'sine', bassLevel: 0.095 },
-  'Starlit Memory': { chordCutoff: 1750, melodyCutoff: 3200, bassCutoff: 430, drumLevel: 0, noiseCutoff: 3400, noiseLevel: 0.002, textureHighpass: 1100, textureCutoff: 3900, roomCutoff: 2800, roomTimes: [0.21, 0.41], roomLevels: [0.16, 0.13], chordLayers: [['sine', -11, 0.69], ['triangle', 11, 0.23]], chordLevel: 0.032, chordAttack: 0.39, chordDecay: false, melodyType: 'sine', melodyLevel: 0.021, melodyAttack: 0.025, melodyHarmonic: [2.01, 0.19], textureType: 'triangle', textureLevel: 0.021, textureAttack: 0.018, bassType: 'sine', bassLevel: 0.085 },
-  'Velvet Tide': { chordCutoff: 1050, melodyCutoff: 1350, bassCutoff: 350, drumLevel: 0, noiseCutoff: 1450, noiseLevel: 0.003, textureHighpass: 390, textureCutoff: 1300, roomCutoff: 1450, roomTimes: [0.31, 0.48], roomLevels: [0.18, 0.12], chordLayers: [['sine', -5, 0.82], ['triangle', 5, 0.16]], chordLevel: 0.041, chordAttack: 0.8, chordDecay: false, melodyType: 'sine', melodyLevel: 0.017, melodyAttack: 0.29, textureType: 'sine', textureLevel: 0.027, textureAttack: 0.21, bassType: 'sine', bassLevel: 0.105 },
-  'Faded Polaroid': { chordCutoff: 1500, melodyCutoff: 1650, bassCutoff: 390, drumLevel: 0, noiseCutoff: 1650, noiseLevel: 0.006, textureHighpass: 600, textureCutoff: 1800, roomCutoff: 1750, roomTimes: [0.16, 0.31], roomLevels: [0.12, 0.09], chordLayers: [['triangle', -3, 0.62], ['sine', 4, 0.33]], chordLevel: 0.035, chordAttack: 0.032, chordDecay: true, melodyType: 'triangle', melodyLevel: 0.019, melodyAttack: 0.03, textureType: 'sine', textureLevel: 0.024, textureAttack: 0.045, bassType: 'triangle', bassLevel: 0.079 },
-  'Midnight Bloom': { chordCutoff: 1250, melodyCutoff: 2150, bassCutoff: 360, drumLevel: 0, noiseCutoff: 1200, noiseLevel: 0.002, textureHighpass: 740, textureCutoff: 2200, roomCutoff: 1600, roomTimes: [0.27, 0.45], roomLevels: [0.18, 0.11], chordLayers: [['sine', -9, 0.74], ['triangle', 7, 0.22]], chordLevel: 0.037, chordAttack: 0.56, chordDecay: false, melodyType: 'triangle', melodyLevel: 0.018, melodyAttack: 0.12, textureType: 'sine', textureLevel: 0.024, textureAttack: 0.15, bassType: 'sine', bassLevel: 0.095 },
-  'Glass Garden': { chordCutoff: 2400, melodyCutoff: 3500, bassCutoff: 470, drumLevel: 0, noiseCutoff: 3200, noiseLevel: 0.002, textureHighpass: 1250, textureCutoff: 4300, roomCutoff: 2900, roomTimes: [0.19, 0.37], roomLevels: [0.14, 0.11], chordLayers: [['sine', -3, 0.52], ['triangle', 3, 0.37]], chordLevel: 0.03, chordAttack: 0.19, chordDecay: true, melodyType: 'triangle', melodyLevel: 0.017, melodyAttack: 0.012, melodyHarmonic: [2.72, 0.21], textureType: 'triangle', textureLevel: 0.018, textureAttack: 0.012, bassType: 'sine', bassLevel: 0.075 },
-  'Winter Light': { chordCutoff: 1850, melodyCutoff: 2650, bassCutoff: 385, drumLevel: 0, noiseCutoff: 2300, noiseLevel: 0.002, textureHighpass: 1000, textureCutoff: 3100, roomCutoff: 2250, roomTimes: [0.24, 0.44], roomLevels: [0.16, 0.12], chordLayers: [['sine', -2, 0.74], ['triangle', 3, 0.19]], chordLevel: 0.032, chordAttack: 0.51, chordDecay: false, melodyType: 'sine', melodyLevel: 0.017, melodyAttack: 0.18, textureType: 'sine', textureLevel: 0.021, textureAttack: 0.1, bassType: 'sine', bassLevel: 0.08 },
-  'Slow Orbit': { chordCutoff: 1100, melodyCutoff: 1900, bassCutoff: 355, drumLevel: 0, noiseCutoff: 1000, noiseLevel: 0.002, textureHighpass: 540, textureCutoff: 2050, roomCutoff: 1500, roomTimes: [0.33, 0.49], roomLevels: [0.16, 0.11], chordLayers: [['triangle', -12, 0.43], ['sine', 12, 0.49]], chordLevel: 0.035, chordAttack: 0.73, chordDecay: false, melodyType: 'sine', melodyLevel: 0.019, melodyAttack: 0.24, textureType: 'triangle', textureLevel: 0.019, textureAttack: 0.19, bassType: 'sine', bassLevel: 0.09 },
-  'Golden Echo': { chordCutoff: 2050, melodyCutoff: 2750, bassCutoff: 445, drumLevel: 0, noiseCutoff: 2450, noiseLevel: 0.003, textureHighpass: 960, textureCutoff: 3250, roomCutoff: 2550, roomTimes: [0.22, 0.4], roomLevels: [0.18, 0.13], chordLayers: [['triangle', -4, 0.57], ['sine', 6, 0.32]], chordLevel: 0.033, chordAttack: 0.26, chordDecay: true, melodyType: 'sine', melodyLevel: 0.019, melodyAttack: 0.055, melodyHarmonic: [2, 0.14], textureType: 'triangle', textureLevel: 0.022, textureAttack: 0.045, bassType: 'sine', bassLevel: 0.086 },
+  'Cloud Drift': { chordCutoff: 1550, melodyCutoff: 1650, bassCutoff: 420, drumLevel: 0.32, noiseCutoff: 2100, noiseLevel: 0.004, textureHighpass: 470, textureCutoff: 1650, roomCutoff: 1900, roomTimes: [0.23, 0.39], roomLevels: [0.14, 0.1], chordLayers: [['warm', -6, 0.72], ['air', 6, 0.32]], chordLevel: 0.038, chordAttack: 0.32, chordDecay: false, melodyType: 'flute', melodyEnvelope: 'sustain', melodyLevel: 0.024, melodyAttack: 0.1, textureType: 'air', textureLevel: 0.033, textureAttack: 0.11, bassType: 'sine', bassLevel: 0.12 },
+  'Rain Window': { chordCutoff: 2200, melodyCutoff: 2050, bassCutoff: 470, drumLevel: 0.26, noiseCutoff: 3000, noiseLevel: 0.007, textureHighpass: 650, textureCutoff: 2500, roomCutoff: 2400, roomTimes: [0.17, 0.34], roomLevels: [0.11, 0.08], chordLayers: [['pluck', -4, 0.58], ['glass', 5, 0.34]], chordLevel: 0.034, chordAttack: 0.018, chordDecay: true, melodyType: 'pluck', melodyEnvelope: 'pluck', melodyLevel: 0.022, melodyAttack: 0.009, textureType: 'glass', textureLevel: 0.027, textureAttack: 0.035, bassType: 'sine', bassLevel: 0.105 },
+  'Dawn Haze': { chordCutoff: 1200, melodyCutoff: 1850, bassCutoff: 380, drumLevel: 0, noiseCutoff: 3800, noiseLevel: 0.003, textureHighpass: 520, textureCutoff: 2600, roomCutoff: 1700, roomTimes: [0.29, 0.46], roomLevels: [0.16, 0.11], chordLayers: [['flute', -8, 0.84], ['warm', 7, 0.16]], chordLevel: 0.033, chordAttack: 0.65, chordDecay: false, melodyType: 'flute', melodyEnvelope: 'sustain', melodyLevel: 0.019, melodyAttack: 0.22, textureType: 'warm', textureLevel: 0.025, textureAttack: 0.13, bassType: 'sine', bassLevel: 0.1 },
+  'Blue Hour': { chordCutoff: 1400, melodyCutoff: 2400, bassCutoff: 400, drumLevel: 0, noiseCutoff: 1900, noiseLevel: 0.003, textureHighpass: 840, textureCutoff: 3100, roomCutoff: 2100, roomTimes: [0.28, 0.43], roomLevels: [0.17, 0.12], chordLayers: [['hollow', -7, 0.56], ['reed', 9, 0.3]], chordLevel: 0.034, chordAttack: 0.42, chordDecay: false, melodyType: 'reed', melodyEnvelope: 'sustain', melodyLevel: 0.018, melodyAttack: 0.16, textureType: 'hollow', textureLevel: 0.024, textureAttack: 0.07, bassType: 'sine', bassLevel: 0.095 },
+  'Starlit Memory': { chordCutoff: 1750, melodyCutoff: 3200, bassCutoff: 430, drumLevel: 0, noiseCutoff: 3400, noiseLevel: 0.002, textureHighpass: 1100, textureCutoff: 3900, roomCutoff: 2800, roomTimes: [0.21, 0.41], roomLevels: [0.16, 0.13], chordLayers: [['shimmer', -11, 0.62], ['glass', 11, 0.24]], chordLevel: 0.032, chordAttack: 0.39, chordDecay: false, melodyType: 'bell', melodyEnvelope: 'bell', melodyLevel: 0.021, melodyAttack: 0.01, melodyHarmonic: [2.01, 0.19], textureType: 'shimmer', textureLevel: 0.021, textureAttack: 0.018, bassType: 'sine', bassLevel: 0.085 },
+  'Velvet Tide': { chordCutoff: 1050, melodyCutoff: 1350, bassCutoff: 350, drumLevel: 0, noiseCutoff: 1450, noiseLevel: 0.003, textureHighpass: 390, textureCutoff: 1300, roomCutoff: 1450, roomTimes: [0.31, 0.48], roomLevels: [0.18, 0.12], chordLayers: [['warm', -5, 0.82], ['hollow', 5, 0.16]], chordLevel: 0.041, chordAttack: 0.8, chordDecay: false, melodyType: 'hollow', melodyEnvelope: 'sustain', melodyLevel: 0.017, melodyAttack: 0.29, textureType: 'warm', textureLevel: 0.027, textureAttack: 0.21, bassType: 'sine', bassLevel: 0.105 },
+  'Faded Polaroid': { chordCutoff: 1500, melodyCutoff: 1650, bassCutoff: 390, drumLevel: 0, noiseCutoff: 1650, noiseLevel: 0.006, textureHighpass: 600, textureCutoff: 1800, roomCutoff: 1750, roomTimes: [0.16, 0.31], roomLevels: [0.12, 0.09], chordLayers: [['pluck', -3, 0.62], ['mallet', 4, 0.33]], chordLevel: 0.035, chordAttack: 0.015, chordDecay: true, melodyType: 'mallet', melodyEnvelope: 'pluck', melodyLevel: 0.019, melodyAttack: 0.012, textureType: 'pluck', textureLevel: 0.024, textureAttack: 0.045, bassType: 'triangle', bassLevel: 0.079 },
+  'Midnight Bloom': { chordCutoff: 1250, melodyCutoff: 2150, bassCutoff: 360, drumLevel: 0, noiseCutoff: 1200, noiseLevel: 0.002, textureHighpass: 740, textureCutoff: 2200, roomCutoff: 1600, roomTimes: [0.27, 0.45], roomLevels: [0.18, 0.11], chordLayers: [['hollow', -9, 0.74], ['warm', 7, 0.22]], chordLevel: 0.037, chordAttack: 0.56, chordDecay: false, melodyType: 'reed', melodyEnvelope: 'sustain', melodyLevel: 0.018, melodyAttack: 0.12, textureType: 'flute', textureLevel: 0.024, textureAttack: 0.15, bassType: 'sine', bassLevel: 0.095 },
+  'Glass Garden': { chordCutoff: 2400, melodyCutoff: 3500, bassCutoff: 470, drumLevel: 0, noiseCutoff: 3200, noiseLevel: 0.002, textureHighpass: 1250, textureCutoff: 4300, roomCutoff: 2900, roomTimes: [0.19, 0.37], roomLevels: [0.14, 0.11], chordLayers: [['glass', -3, 0.52], ['bell', 3, 0.29]], chordLevel: 0.03, chordAttack: 0.025, chordDecay: true, melodyType: 'bell', melodyEnvelope: 'bell', melodyLevel: 0.017, melodyAttack: 0.008, melodyHarmonic: [2.72, 0.21], textureType: 'glass', textureLevel: 0.018, textureAttack: 0.012, bassType: 'sine', bassLevel: 0.075 },
+  'Winter Light': { chordCutoff: 1850, melodyCutoff: 2650, bassCutoff: 385, drumLevel: 0, noiseCutoff: 2300, noiseLevel: 0.002, textureHighpass: 1000, textureCutoff: 3100, roomCutoff: 2250, roomTimes: [0.24, 0.44], roomLevels: [0.16, 0.12], chordLayers: [['air', -2, 0.74], ['flute', 3, 0.19]], chordLevel: 0.032, chordAttack: 0.51, chordDecay: false, melodyType: 'flute', melodyEnvelope: 'sustain', melodyLevel: 0.017, melodyAttack: 0.18, textureType: 'glass', textureLevel: 0.021, textureAttack: 0.1, bassType: 'sine', bassLevel: 0.08 },
+  'Slow Orbit': { chordCutoff: 1100, melodyCutoff: 1900, bassCutoff: 355, drumLevel: 0, noiseCutoff: 1000, noiseLevel: 0.002, textureHighpass: 540, textureCutoff: 2050, roomCutoff: 1500, roomTimes: [0.33, 0.49], roomLevels: [0.16, 0.11], chordLayers: [['hollow', -12, 0.43], ['air', 12, 0.49]], chordLevel: 0.035, chordAttack: 0.73, chordDecay: false, melodyType: 'hollow', melodyEnvelope: 'sustain', melodyLevel: 0.019, melodyAttack: 0.24, textureType: 'shimmer', textureLevel: 0.019, textureAttack: 0.19, bassType: 'sine', bassLevel: 0.09 },
+  'Golden Echo': { chordCutoff: 2050, melodyCutoff: 2750, bassCutoff: 445, drumLevel: 0, noiseCutoff: 2450, noiseLevel: 0.003, textureHighpass: 960, textureCutoff: 3250, roomCutoff: 2550, roomTimes: [0.22, 0.4], roomLevels: [0.18, 0.13], chordLayers: [['mallet', -4, 0.57], ['warm', 6, 0.32]], chordLevel: 0.033, chordAttack: 0.04, chordDecay: true, melodyType: 'mallet', melodyEnvelope: 'pluck', melodyLevel: 0.019, melodyAttack: 0.014, melodyHarmonic: [2, 0.14], textureType: 'bell', textureLevel: 0.022, textureAttack: 0.045, bassType: 'sine', bassLevel: 0.086 },
 };
 
 // Three independent beds make the noise feel less like one static loop. Values
@@ -214,6 +232,7 @@ export class ChillerEngine {
   private rain: AudioBuffer | null = null;
   private crackle: AudioBuffer | null = null;
   private reverbImpulse: AudioBuffer | null = null;
+  private waves = new Map<Timbre, PeriodicWave>();
   private sessions: TrackSession[] = [];
   private timer: ReturnType<typeof setInterval> | null = null;
   private listeners = new Set<(snapshot: PlayerSnapshot) => void>();
@@ -365,6 +384,7 @@ export class ChillerEngine {
     this.rain = null;
     this.crackle = null;
     this.reverbImpulse = null;
+    this.waves.clear();
     this.listeners.clear();
   }
 
@@ -428,6 +448,23 @@ export class ChillerEngine {
     this.crackle = createCrackleBuffer(context);
     this.reverbImpulse = createReverbImpulse(context);
     return context;
+  }
+
+  private setTimbre(osc: OscillatorNode, timbre: Timbre): void {
+    const harmonics = HARMONICS[timbre];
+    if (!harmonics) {
+      osc.type = timbre as OscillatorType;
+      return;
+    }
+    let wave = this.waves.get(timbre);
+    if (!wave) {
+      const real = new Float32Array(harmonics.length + 1);
+      const imag = new Float32Array(harmonics.length + 1);
+      harmonics.forEach((amplitude, index) => { imag[index + 1] = amplitude; });
+      wave = this.context!.createPeriodicWave(real, imag);
+      this.waves.set(timbre, wave);
+    }
+    osc.setPeriodicWave(wave);
   }
 
   private createSession(composition: Composition, startTime: number, initialGain: number): TrackSession {
@@ -661,14 +698,15 @@ export class ChillerEngine {
     const context = this.context!;
     const sound = AMBIENT_SOUND[ambientVariant(session.composition)];
     const osc = context.createOscillator();
-    osc.type = sound.textureType;
+    this.setTimbre(osc, sound.textureType);
     osc.frequency.value = midiFrequency(note);
     const envelope = context.createGain();
     const attack = Math.min(duration * 0.35, sound.textureAttack);
     const releaseStart = at + Math.max(attack, duration - 0.2);
     envelope.gain.setValueAtTime(0, at);
     envelope.gain.linearRampToValueAtTime(sound.textureLevel * energy, at + attack);
-    envelope.gain.linearRampToValueAtTime(sound.textureLevel * 0.82 * energy, releaseStart);
+    const textureDecay = sound.textureType === 'pluck' || sound.textureType === 'bell' || sound.textureType === 'glass';
+    envelope.gain.linearRampToValueAtTime(sound.textureLevel * (textureDecay ? 0.24 : 0.82) * energy, releaseStart);
     envelope.gain.linearRampToValueAtTime(0, at + duration);
     osc.connect(envelope).connect(session.texture);
     this.trackSource(session, osc, () => envelope.disconnect());
@@ -697,7 +735,7 @@ export class ChillerEngine {
       let layersRemaining = 2;
       for (const [type, detune, mix] of sound.chordLayers) {
         const osc = context.createOscillator();
-        osc.type = type;
+        this.setTimbre(osc, type);
         osc.frequency.value = midiFrequency(note);
         osc.detune.value = detune;
         const layer = context.createGain();
@@ -733,15 +771,48 @@ export class ChillerEngine {
     const context = this.context!;
     const sound = AMBIENT_SOUND[ambientVariant(session.composition)];
     const osc = context.createOscillator();
-    osc.type = sound.melodyType;
+    this.setTimbre(osc, sound.melodyType);
     osc.frequency.value = midiFrequency(note);
     const envelope = context.createGain();
-    envelope.gain.setValueAtTime(0, at);
-    envelope.gain.linearRampToValueAtTime(sound.melodyLevel * energy,
-      at + Math.min(sound.melodyAttack, duration * 0.35));
+    const level = Math.max(0.0001, sound.melodyLevel * energy);
+    const attack = Math.min(sound.melodyAttack, duration * 0.35);
+    envelope.gain.setValueAtTime(0.0001, at);
+    envelope.gain.linearRampToValueAtTime(level, at + attack);
+    if (sound.melodyEnvelope === 'pluck') {
+      envelope.gain.exponentialRampToValueAtTime(level * 0.35, at + duration * 0.45);
+      envelope.gain.exponentialRampToValueAtTime(level * 0.13, at + duration * 0.8);
+    } else if (sound.melodyEnvelope === 'bell') {
+      envelope.gain.exponentialRampToValueAtTime(level * 0.48, at + duration * 0.4);
+      envelope.gain.exponentialRampToValueAtTime(level * 0.18, at + duration * 0.8);
+    } else {
+      envelope.gain.linearRampToValueAtTime(level * 0.82, at + duration * 0.72);
+    }
     envelope.gain.exponentialRampToValueAtTime(0.0001, at + duration);
-    osc.connect(envelope).connect(session.melody);
-    this.trackSource(session, osc, () => envelope.disconnect());
+    if (sound.melodyEnvelope !== 'sustain') {
+      const frequency = midiFrequency(note);
+      osc.frequency.setValueAtTime(frequency * (sound.melodyEnvelope === 'bell' ? 1.018 : 1.012), at);
+      osc.frequency.exponentialRampToValueAtTime(frequency, at + Math.min(0.04, duration * 0.2));
+    }
+    // The brighter attack closes down as a struck note rings out. The sweep
+    // separates plucked and bell-like voices from sustained leads in motion,
+    // not just in their fixed harmonic recipes.
+    const tone = sound.melodyEnvelope === 'sustain' ? null : context.createBiquadFilter();
+    if (tone) {
+      const frequency = midiFrequency(note);
+      const high = Math.min(context.sampleRate * 0.45, Math.max(2400, frequency * 10));
+      const low = Math.min(high * 0.65, Math.max(650, frequency * (sound.melodyEnvelope === 'bell' ? 4 : 2.5)));
+      tone.type = 'lowpass';
+      tone.Q.value = 0.6;
+      tone.frequency.setValueAtTime(high, at);
+      tone.frequency.exponentialRampToValueAtTime(low, at + Math.min(duration * 0.65, sound.melodyEnvelope === 'bell' ? 0.6 : 0.3));
+      osc.connect(envelope).connect(tone).connect(session.melody);
+    } else {
+      osc.connect(envelope).connect(session.melody);
+    }
+    this.trackSource(session, osc, () => {
+      envelope.disconnect();
+      tone?.disconnect();
+    });
     osc.start(at);
     osc.stop(at + duration + 0.015);
     if (sound.melodyHarmonic) {
