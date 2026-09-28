@@ -52,6 +52,7 @@ const SCHEDULE_INTERVAL_MS = 25;
 const LOOKAHEAD_SECONDS = 0.22;
 const CROSSFADE_SECONDS = 1;
 const STEPS_PER_BAR = 16;
+const NOISE_BED_LEVEL = 0.85;
 
 type Layer = readonly [OscillatorType, number, number];
 type AmbientSound = {
@@ -542,7 +543,7 @@ export class ChillerEngine {
       lowpass.type = 'lowpass';
       lowpass.frequency.value = bed.cutoff;
       const gain = context.createGain();
-      gain.gain.value = bed.level;
+      gain.gain.value = bed.level * NOISE_BED_LEVEL;
       source.connect(highpass).connect(lowpass).connect(gain).connect(session.gain);
       this.trackSource(session, source, () => {
         highpass.disconnect();
