@@ -28,6 +28,9 @@ type Setting = {
   bpm: readonly [number, number];
   words: readonly string[];
   endings: readonly string[];
+  titleSubjects: readonly string[];
+  titleScenes: readonly string[];
+  titlePhrases: readonly string[];
   chordColor: 'seventh' | 'ninth' | 'eleventh' | 'open' | 'pentatonic';
 };
 
@@ -44,6 +47,9 @@ const SETTINGS: Record<AmbientVariant, Setting> = {
     progressions: [[0, 5, 3, 4], [3, 0, 5, 4], [5, 3, 0, 4]],
     bpm: [56, 62], words: ['Cloud', 'Still', 'Floating', 'Open', 'Weightless'],
     endings: ['Hours', 'Horizon', 'Drift', 'Clouds', 'Sky'], chordColor: 'seventh',
+    titleSubjects: ['Light', 'Shadows', 'Birds', 'Daydreams', 'Clouds'],
+    titleScenes: ['Above the City', 'Over the Hills', 'In Open Air', 'Past the Window', 'Before Sunrise'],
+    titlePhrases: ['Above the Rooftops', 'Where the Air Sleeps', 'No Gravity Tonight', 'Far from the Ground', 'A Place to Float', 'Between Two Skies'],
   },
   'Rain Window': {
     scale: MAJOR,
@@ -51,6 +57,9 @@ const SETTINGS: Record<AmbientVariant, Setting> = {
     progressions: [[5, 3, 0, 3], [5, 3, 5, 0], [5, 0, 3, 0]],
     bpm: [59, 66], words: ['Rain', 'Blue', 'Quiet', 'Silver', 'Passing'],
     endings: ['Window', 'Letters', 'Lantern', 'Evening', 'Glass'], chordColor: 'eleventh',
+    titleSubjects: ['Footsteps', 'Headlights', 'Raindrops', 'Reflections', 'Letters'],
+    titleScenes: ['On Wet Pavement', 'Behind the Glass', 'After the Storm', 'Under Streetlights', 'By the Station'],
+    titlePhrases: ['After the Last Train', 'Drops on the Sill', 'The Street Is Shining', 'When the Rain Slows', 'Under One Umbrella', 'Across Wet Glass'],
   },
   'Dawn Haze': {
     scale: MAJOR,
@@ -58,6 +67,9 @@ const SETTINGS: Record<AmbientVariant, Setting> = {
     progressions: [[0, 3, 1, 3], [0, 1, 5, 3], [3, 1, 0, 3]],
     bpm: [63, 70], words: ['Dawn', 'Golden', 'Morning', 'Soft', 'First'],
     endings: ['Haze', 'Light', 'Air', 'Glow', 'Day'], chordColor: 'ninth',
+    titleSubjects: ['Birdsong', 'Light', 'Shadows', 'Coffee', 'Clouds'],
+    titleScenes: ['Before Breakfast', 'Through the Blinds', 'On the Rooftop', 'Across the Floor', 'After the Night'],
+    titlePhrases: ['Before the City Wakes', 'A Little More Sun', 'Through Pale Curtains', 'The First Warmth', 'Almost Morning', 'Into the Day'],
   },
   'Blue Hour': {
     scale: MINOR,
@@ -65,13 +77,19 @@ const SETTINGS: Record<AmbientVariant, Setting> = {
     progressions: [[0, 5, 3, 6], [0, 3, 5, 3], [5, 3, 0, 6]],
     bpm: [54, 61], words: ['Blue', 'Fading', 'Violet', 'Last', 'Indigo'],
     endings: ['Hour', 'Light', 'Sky', 'Letters', 'Street'], chordColor: 'eleventh',
+    titleSubjects: ['Lanterns', 'Footsteps', 'Windows', 'Headlights', 'Shadows'],
+    titleScenes: ['After Sunset', 'Along the Street', 'Beyond the Neon', 'Under Violet Skies', 'Past the Corner'],
+    titlePhrases: ['After the Sun Goes', 'The Last Bus Home', 'Between Day and Night', 'Lights Across Town', 'Until the Lamps Glow', 'A Street in Blue'],
   },
   'Starlit Memory': {
     scale: LYDIAN,
     keys: [{ name: 'F Lydian', midi: 53 }, { name: 'C Lydian', midi: 48 }, { name: 'G Lydian', midi: 55 }],
     progressions: [[0, 4, 1, 4], [0, 2, 4, 1], [4, 1, 0, 4]],
-    bpm: [51, 58], words: ['Starlit', 'Distant', 'Remembered', 'Pale', 'Wishing'],
+    bpm: [51, 58], words: ['Starlit', 'Distant', 'Remembered', 'Pale', 'Wistful'],
     endings: ['Memory', 'Stars', 'Orbit', 'Night', 'Wish'], chordColor: 'ninth',
+    titleSubjects: ['Letters', 'Signals', 'Dreams', 'Stars', 'Memories'],
+    titleScenes: ['Across the Sky', 'From Far Away', 'After Midnight', 'Beyond the Roof', 'In the Dark'],
+    titlePhrases: ['The Way Back Then', 'A Map of Stars', 'Someone to Remember', 'Under the Same Sky', 'Wish You Were Here', 'Light Years Away'],
   },
   'Velvet Tide': {
     scale: DORIAN,
@@ -79,20 +97,29 @@ const SETTINGS: Record<AmbientVariant, Setting> = {
     progressions: [[0, 3, 4, 3], [0, 4, 6, 3], [3, 0, 4, 0]],
     bpm: [58, 65], words: ['Velvet', 'Deep', 'Low', 'Gentle', 'Moonlit'],
     endings: ['Tide', 'Water', 'Shore', 'Current', 'Blue'], chordColor: 'open',
+    titleSubjects: ['Ripples', 'Moonlight', 'Waves', 'Shadows', 'Dreams'],
+    titleScenes: ['Along the Shore', 'Under the Moon', 'Across the Water', 'After the Tide', 'On Quiet Seas'],
+    titlePhrases: ['Beneath the Surface', 'The Water Knows', 'Slow Waves Home', 'At the Waterline', 'A Moon on Water', 'Where Rivers Rest'],
   },
   'Faded Polaroid': {
     scale: MAJOR,
     keys: [{ name: 'D major', midi: 50 }, { name: 'A major', midi: 45 }, { name: 'C major', midi: 48 }],
     progressions: [[0, 5, 3, 1], [5, 3, 1, 0], [3, 1, 5, 0]],
-    bpm: [60, 68], words: ['Faded', 'Old', 'Summer', 'Sepia', 'Forgotten'],
+    bpm: [60, 68], words: ['Faded', 'Old', 'August', 'Sepia', 'Forgotten'],
     endings: ['Polaroid', 'Photograph', 'Summer', 'Faces', 'Album'], chordColor: 'seventh',
+    titleSubjects: ['Postcards', 'Faces', 'Sunlight', 'Memories', 'Snapshots'],
+    titleScenes: ['From That Summer', 'In the Drawer', 'After the Rain', 'On the Wall', 'Across the Years'],
+    titlePhrases: ['The Year We Left', 'In Another Summer', 'A Picture of Us', 'Found in a Drawer', 'Before the Colors Faded', 'Someone Else’s August'],
   },
   'Midnight Bloom': {
     scale: MINOR,
     keys: [{ name: 'C minor', midi: 48 }, { name: 'G minor', midi: 55 }, { name: 'D minor', midi: 50 }],
     progressions: [[0, 6, 3, 5], [0, 3, 6, 3], [5, 6, 0, 3]],
-    bpm: [61, 69], words: ['Midnight', 'Hidden', 'Dark', 'Quiet', 'After'],
+    bpm: [61, 69], words: ['Midnight', 'Hidden', 'Dark', 'Quiet', 'Secret'],
     endings: ['Bloom', 'Garden', 'Petals', 'Moon', 'Shadow'], chordColor: 'eleventh',
+    titleSubjects: ['Flowers', 'Shadows', 'Moonlight', 'Petals', 'Whispers'],
+    titleScenes: ['Behind the House', 'After Midnight', 'Under the Moon', 'Through the Leaves', 'In the Garden'],
+    titlePhrases: ['Flowers After Dark', 'The Garden Sleeps', 'Under a Black Moon', 'When Petals Fall', 'A Light Behind Leaves', 'Night Opens Slowly'],
   },
   'Glass Garden': {
     scale: PENTATONIC,
@@ -100,6 +127,9 @@ const SETTINGS: Record<AmbientVariant, Setting> = {
     progressions: [[0, 3, 1, 4], [0, 2, 3, 1], [3, 1, 0, 4]],
     bpm: [66, 74], words: ['Glass', 'Clear', 'Little', 'Crystal', 'Bright'],
     endings: ['Garden', 'Drops', 'Petals', 'Shimmer', 'Light'], chordColor: 'pentatonic',
+    titleSubjects: ['Colors', 'Sunlight', 'Raindrops', 'Shadows', 'Petals'],
+    titleScenes: ['Through the Glass', 'Across the Floor', 'Under the Leaves', 'At the Window', 'After the Rain'],
+    titlePhrases: ['Sun Through Glass', 'A Thousand Small Lights', 'Between the Leaves', 'The World in Drops', 'Where Colors Gather', 'A Room of Light'],
   },
   'Winter Light': {
     scale: MAJOR,
@@ -107,6 +137,9 @@ const SETTINGS: Record<AmbientVariant, Setting> = {
     progressions: [[5, 3, 0, 4], [3, 5, 1, 0], [5, 1, 3, 0]],
     bpm: [48, 55], words: ['Winter', 'White', 'Frosted', 'Quiet', 'Snowfall'],
     endings: ['Light', 'Morning', 'Room', 'Silence', 'Glass'], chordColor: 'ninth',
+    titleSubjects: ['Snowflakes', 'Sunlight', 'Shadows', 'Footprints', 'Breath'],
+    titleScenes: ['On the Window', 'Across the Snow', 'In the Morning', 'Under the Trees', 'Before the Thaw'],
+    titlePhrases: ['Before the Snow Melts', 'A Window in December', 'The Long White Morning', 'Warmth Beneath Snow', 'When the Room Is Still', 'Across the Frost'],
   },
   'Slow Orbit': {
     scale: DORIAN,
@@ -114,6 +147,9 @@ const SETTINGS: Record<AmbientVariant, Setting> = {
     progressions: [[0, 6, 3, 4], [0, 4, 3, 6], [3, 6, 0, 4]],
     bpm: [50, 57], words: ['Slow', 'Far', 'Endless', 'Quiet', 'Turning'],
     endings: ['Orbit', 'Satellite', 'Distance', 'Gravity', 'Stars'], chordColor: 'open',
+    titleSubjects: ['Signals', 'Starlight', 'Satellites', 'Dreams', 'Shadows'],
+    titleScenes: ['Beyond the Moon', 'Across the Stars', 'After Midnight', 'Over the Earth', 'In the Distance'],
+    titlePhrases: ['The Space Between Us', 'Out Beyond the Moon', 'A Signal from Home', 'No Hurry to Land', 'Around and Around', 'Somewhere Past Saturn'],
   },
   'Golden Echo': {
     scale: MAJOR,
@@ -121,6 +157,9 @@ const SETTINGS: Record<AmbientVariant, Setting> = {
     progressions: [[0, 3, 5, 4], [3, 0, 4, 5], [5, 3, 1, 4]],
     bpm: [62, 70], words: ['Golden', 'Warm', 'Honey', 'Last', 'Lingering'],
     endings: ['Echo', 'Sun', 'Afterglow', 'Light', 'Home'], chordColor: 'ninth',
+    titleSubjects: ['Sunlight', 'Footsteps', 'Shadows', 'Laughter', 'Memories'],
+    titleScenes: ['After Sunset', 'Across the Room', 'On the Way Home', 'Under the Trees', 'Before the Night'],
+    titlePhrases: ['A Little After Sunset', 'The Warmth Remains', 'Come Home Slowly', 'When the Light Returns', 'One More Golden Hour', 'The Sun Stays Here'],
   },
 };
 
@@ -143,9 +182,14 @@ export function makeComposition(seed: number): Composition {
   const progression = settings.progressions[Math.floor(random01(normalized, 2) * settings.progressions.length)];
   const adjective = settings.words[Math.floor(random01(normalized, 3) * settings.words.length)];
   const noun = settings.endings[Math.floor(random01(normalized, 4) * settings.endings.length)];
+  const titleShape = random01(normalized, 7);
+  const title = titleShape < 0.45 ? `${adjective} ${noun}`
+    : titleShape < 0.9
+      ? `${settings.titleSubjects[Math.floor(random01(normalized, 8) * settings.titleSubjects.length)]} ${settings.titleScenes[Math.floor(random01(normalized, 9) * settings.titleScenes.length)]}`
+      : settings.titlePhrases[Math.floor(random01(normalized, 10) * settings.titlePhrases.length)];
   return {
     seed: normalized,
-    title: `${adjective} ${noun}`,
+    title,
     style: 'Soft Ambient',
     ambientVariant,
     key: key.name,

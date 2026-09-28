@@ -45,7 +45,19 @@ describe('Ambient composition', () => {
       expect(composition.bpm).toBeGreaterThanOrEqual(48);
       expect(composition.bpm).toBeLessThanOrEqual(74);
     }
-    expect(new Set(compositions.map((composition) => composition.title)).size).toBeGreaterThan(150);
+    const titles = compositions.map((composition) => composition.title);
+    expect(new Set(titles).size).toBeGreaterThan(400);
+    expect(titles.filter((title) => title.split(' ').length === 2).length).toBeGreaterThan(300);
+    expect(titles.filter((title) => title.split(' ').length >= 3).length).toBeGreaterThan(300);
+    expect(titles.every((title) => title.length <= 30)).toBe(true);
+    const titleCounts = new Map<string, number>();
+    for (const title of titles) titleCounts.set(title, (titleCounts.get(title) ?? 0) + 1);
+    expect(Math.max(...titleCounts.values())).toBeLessThanOrEqual(8);
+    expect(titles.slice(1).filter((title, index) => title === titles[index])).toHaveLength(0);
+    for (const variant of AMBIENT_VARIANTS) {
+      expect(new Set(compositions.filter((composition) => composition.ambientVariant === variant)
+        .map((composition) => composition.title)).size).toBeGreaterThan(35);
+    }
     expect(new Set(compositions.map((composition) => `${composition.key}:${composition.progression.join(',')}`)).size)
       .toBeGreaterThan(70);
     expect(new Set(compositions.map((composition) => composition.bpm)).size).toBeGreaterThan(20);
