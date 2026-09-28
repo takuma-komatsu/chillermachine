@@ -26,6 +26,8 @@ class FakeNode {
   release = new FakeParam();
   type = '';
   curve: Float32Array | null = null;
+  buffer: AudioBuffer | null = null;
+  normalize = true;
   oversample = 'none';
   disconnected = false;
   connections: FakeNode[] = [];
@@ -40,7 +42,6 @@ class FakeSource extends FakeNode {
   constructor(private readonly context: FakeAudioContext, onDisconnect: (node: FakeNode) => void) {
     super(onDisconnect);
   }
-  buffer: AudioBuffer | null = null;
   loop = false;
   onended: ((event: Event) => void) | null = null;
   startedAt?: number;
@@ -88,14 +89,16 @@ class FakeAudioContext {
   }
   createDynamicsCompressor(): FakeNode { return this.node(); }
   createWaveShaper(): FakeNode { return this.node(); }
+  createConvolver(): FakeNode { return this.node(); }
   createOscillator(): FakeSource {
     const oscillator = this.source();
     this.oscillators.push(oscillator);
     return oscillator;
   }
   createBufferSource(): FakeSource { return this.source(); }
-  createBuffer(_channels: number, length: number): AudioBuffer {
-    return { getChannelData: () => new Float32Array(length) } as unknown as AudioBuffer;
+  createBuffer(channels: number, length: number): AudioBuffer {
+    const data = Array.from({ length: channels }, () => new Float32Array(length));
+    return { numberOfChannels: channels, length, getChannelData: (channel: number) => data[channel] } as unknown as AudioBuffer;
   }
   resume(): Promise<void> { this.resumeCalls++; this.state = 'running'; return Promise.resolve(); }
   suspend(): Promise<void> { this.state = 'suspended'; return Promise.resolve(); }
@@ -314,6 +317,61 @@ describe('ChillerEngine scheduling', () => {
       expect(context.nodes.size).toBe(0);
     }
     expect(signatures.size).toBe(AMBIENT_VARIANTS.length);
+  });
+
+  it('adds a short stereo reverb and a quiet, filtered lead echo that retire with each track', async () => {
+    const engine = new ChillerEngine();
+    (engine as unknown as { composition: Composition }).composition = makeComposition(0);
+    await engine.play();
+    const context = FakeAudioContext.instances[0];
+    const internals = engine as unknown as { sessions: Array<{
+      gain: FakeNode; melody: FakeNode; roomLowpass: FakeNode;
+      reverb: FakeNode; reverbGain: FakeNode; echoDelay: FakeNode;
+      echoTone: FakeNode; echoGain: FakeNode; echoFeedback: FakeNode; echoPan: FakeNode;
+    }>; tick(): void };
+    const first = internals.sessions[0];
+    expect(first.reverb.buffer?.numberOfChannels).toBe(2);
+    expect(first.reverb.buffer?.length).toBe(Math.floor(context.sampleRate * 1.45));
+    expect(first.reverb.normalize).toBe(false);
+    const impulse = first.reverb.buffer!.getChannelData(0);
+    const energy = (from: number, to: number) => {
+      let sum = 0;
+      for (let i = Math.floor(from * context.sampleRate); i < Math.floor(to * context.sampleRate); i++) {
+        sum += impulse[i] ** 2;
+      }
+      return sum;
+    };
+    // Kernel energy approximates wet/dry RMS for broadband sound. The late
+    // window must decay even though the initial tail remains clearly present.
+    const wetRatio = Math.sqrt(energy(0, 1.45)) * first.reverbGain.gain.value;
+    expect(wetRatio).toBeGreaterThan(0.14);
+    expect(wetRatio).toBeLessThan(0.25);
+    expect(energy(0.8, 1.3)).toBeLessThan(energy(0.05, 0.4) * 0.03);
+    expect(first.roomLowpass.connections).toContain(first.reverb);
+    expect(first.reverb.connections).toContain(first.reverbGain);
+    expect(first.reverbGain.connections).toContain(first.gain);
+    expect(first.melody.connections).toContain(first.echoDelay);
+    expect(first.echoDelay.connections).toContain(first.echoTone);
+    expect(first.echoTone.connections).toContain(first.echoFeedback);
+    expect(first.echoFeedback.connections).toContain(first.echoDelay);
+    expect(first.echoTone.connections).toContain(first.echoGain);
+    expect(first.echoPan.connections).toContain(first.gain);
+    expect(first.echoDelay.delayTime.value).toBeGreaterThan(0.4);
+    expect(first.echoGain.gain.value).toBeLessThan(0.2);
+    expect(first.echoFeedback.gain.value).toBeLessThan(0.3);
+
+    await engine.next();
+    expect(internals.sessions).toHaveLength(2);
+    const second = internals.sessions[1];
+    expect(second.reverb.buffer).toBe(first.reverb.buffer);
+    expect(second.echoDelay.delayTime.value).not.toBe(first.echoDelay.delayTime.value);
+    context.advanceTo(1.2);
+    internals.tick();
+    expect(internals.sessions).toEqual([second]);
+    for (const node of [first.reverb, first.reverbGain, first.echoDelay, first.echoTone,
+      first.echoGain, first.echoFeedback, first.echoPan]) expect(node.disconnected).toBe(true);
+    engine.dispose();
+    expect(context.nodes.size).toBe(0);
   });
 
   it('recovers from a throttled timer without scheduling notes in the distant past', async () => {

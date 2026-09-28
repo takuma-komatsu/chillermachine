@@ -33,6 +33,13 @@ type TrackSession = {
   roomHighpass: BiquadFilterNode;
   roomLowpass: BiquadFilterNode;
   roomTaps: Array<{ delay: DelayNode; gain: GainNode; pan: StereoPannerNode }>;
+  reverb: ConvolverNode;
+  reverbGain: GainNode;
+  echoDelay: DelayNode;
+  echoTone: BiquadFilterNode;
+  echoGain: GainNode;
+  echoFeedback: GainNode;
+  echoPan: StereoPannerNode;
   sources: Map<AudioScheduledSourceNode, () => void>;
   step: number;
   nextTime: number;
@@ -172,6 +179,27 @@ function createCrackleBuffer(context: AudioContext): AudioBuffer {
   return buffer;
 }
 
+// A short, dark stereo tail. Its fixed seed and duration keep both the sound
+// and memory use predictable across skips; the two channels decorrelate gently.
+function createReverbImpulse(context: AudioContext): AudioBuffer {
+  const length = Math.floor(context.sampleRate * 1.45);
+  const buffer = context.createBuffer(2, length, context.sampleRate);
+  let state = 0x2847a9bd;
+  for (let channel = 0; channel < 2; channel++) {
+    const samples = buffer.getChannelData(channel);
+    let dark = 0;
+    for (let i = 0; i < length; i++) {
+      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+      const time = i / context.sampleRate;
+      dark += ((state / 0x80000000 - 1) - dark) * 0.23;
+      // Keep the wet path near 18% of a broadband dry signal at the usual
+      // room level; the sample-rate factor makes its energy rate-independent.
+      samples[i] = time < 0.012 ? 0 : 9.6 * dark * Math.exp(-time * 3.2) / Math.sqrt(context.sampleRate);
+    }
+  }
+  return buffer;
+}
+
 /** A self-contained procedural Ambient player. Call dispose when leaving the page. */
 export class ChillerEngine {
   private context: AudioContext | null = null;
@@ -182,6 +210,7 @@ export class ChillerEngine {
   private noise: AudioBuffer | null = null;
   private rain: AudioBuffer | null = null;
   private crackle: AudioBuffer | null = null;
+  private reverbImpulse: AudioBuffer | null = null;
   private sessions: TrackSession[] = [];
   private timer: ReturnType<typeof setInterval> | null = null;
   private listeners = new Set<(snapshot: PlayerSnapshot) => void>();
@@ -332,6 +361,7 @@ export class ChillerEngine {
     this.noise = null;
     this.rain = null;
     this.crackle = null;
+    this.reverbImpulse = null;
     this.listeners.clear();
   }
 
@@ -393,6 +423,7 @@ export class ChillerEngine {
     this.noise = createNoiseBuffer(context);
     this.rain = createRainBuffer(context);
     this.crackle = createCrackleBuffer(context);
+    this.reverbImpulse = createReverbImpulse(context);
     return context;
   }
 
@@ -450,6 +481,28 @@ export class ChillerEngine {
       roomLowpass.connect(delay).connect(tapGain).connect(tapPan).connect(gain);
       return { delay, gain: tapGain, pan: tapPan };
     });
+    const reverb = context.createConvolver();
+    reverb.normalize = false;
+    reverb.buffer = this.reverbImpulse;
+    const reverbGain = context.createGain();
+    reverbGain.gain.value = sound.roomLevels[0] + 0.1;
+    roomLowpass.connect(reverb).connect(reverbGain).connect(gain);
+    // Only the lead repeats. Low-passed feedback recedes with each repeat,
+    // while the session gain owns the full tail during crossfades and pause.
+    const echoDelay = context.createDelay(0.8);
+    echoDelay.delayTime.value = Math.min(0.75, sound.roomTimes[1] * 1.5);
+    const echoTone = context.createBiquadFilter();
+    echoTone.type = 'lowpass';
+    echoTone.frequency.value = Math.min(sound.roomCutoff, 1900);
+    const echoGain = context.createGain();
+    echoGain.gain.value = sound.roomLevels[1] * 1.35;
+    const echoFeedback = context.createGain();
+    echoFeedback.gain.value = 0.22;
+    const echoPan = context.createStereoPanner();
+    echoPan.pan.value = -0.42;
+    melody.connect(echoDelay).connect(echoTone);
+    echoTone.connect(echoGain).connect(echoPan).connect(gain);
+    echoTone.connect(echoFeedback).connect(echoDelay);
     const bass = context.createBiquadFilter();
     bass.type = 'lowpass';
     bass.frequency.value = sound.bassCutoff;
@@ -460,6 +513,7 @@ export class ChillerEngine {
     const session: TrackSession = {
       composition, gain, chords, chordPan, melody, melodyPan,
       texture, textureTone, texturePan, bass, drums, roomHighpass, roomLowpass, roomTaps,
+      reverb, reverbGain, echoDelay, echoTone, echoGain, echoFeedback, echoPan,
       sources: new Map(), step: 0, nextTime: startTime,
     };
     this.startHiss(session, startTime);
@@ -530,6 +584,13 @@ export class ChillerEngine {
       tap.gain.disconnect();
       tap.pan.disconnect();
     }
+    session.reverb.disconnect();
+    session.reverbGain.disconnect();
+    session.echoDelay.disconnect();
+    session.echoTone.disconnect();
+    session.echoGain.disconnect();
+    session.echoFeedback.disconnect();
+    session.echoPan.disconnect();
     session.gain.disconnect();
     this.sessions = this.sessions.filter((item) => item !== session);
   }
