@@ -18,6 +18,7 @@ export type Composition = {
   tonicMidi: number;
   scale: readonly number[];
   progression: readonly number[];
+  leadStyle: 'sparse' | 'lyrical';
 };
 
 type Setting = {
@@ -152,6 +153,7 @@ export function makeComposition(seed: number): Composition {
     tonicMidi: key.midi,
     scale: settings.scale,
     progression,
+    leadStyle: random01(normalized, 6) < .4 ? 'lyrical' : 'sparse',
   };
 }
 
@@ -188,6 +190,14 @@ export function bassNote(composition: Composition, bar: number, _position = 0): 
   return scaleNote(composition, degreeForBar(composition, bar)) - 12;
 }
 
+/** The chord's scale fifth, independent of any octave changes in its pad voicing. */
+export function bassFifthNote(composition: Composition, bar: number): number {
+  // Glass Garden's pentatonic chords use [0, 2, 3, 5], rather than the
+  // diatonic [0, 2, 4, ...]. Match the chord's third voice before inversion.
+  const fifthDegree = composition.ambientVariant === 'Glass Garden' ? 3 : 4;
+  return scaleNote(composition, degreeForBar(composition, bar) + fifthDegree) - 12;
+}
+
 /** A deterministic chord tone, useful to callers that need a single pitch. */
 export function melodyNote(composition: Composition, bar: number, beat: number): number {
   const tones = chordNotes(composition, bar);
@@ -201,6 +211,7 @@ export function melodyNote(composition: Composition, bar: number, beat: number):
 export type MelodyEvent = { note: number; duration: number; strength: number; offset: number };
 type PhraseNote = readonly [bar: number, position: number, tone: number, duration: number, strength: number];
 type TextureNote = readonly [step: number, tone: number, duration: number, strength: number];
+type LeadNote = readonly [bar: number, position: number, contour: number, strength: number];
 
 // Two distinct four-bar phrases per variant. Pauses are as much a part of each
 // phrase as the notes; the brighter colors answer more often than the dark ones.
@@ -255,6 +266,54 @@ const PHRASES: Record<AmbientVariant, readonly (readonly PhraseNote[])[]> = {
   ],
 };
 
+// Four-bar sung motifs. Each pair shares its opening hook, then changes the
+// answer and cadence on the next pass. Contour is relative to the lead register;
+// the note is fitted to each bar's safe chord tones below.
+const LYRICAL_MOTIFS: readonly (readonly [readonly LeadNote[], readonly LeadNote[]])[] = [
+  [
+    [
+      [0, 0, -3, .89], [0, 3, 0, .78], [0, 6, 2, .82], [0, 11, 5, .88],
+      [1, 1, 3, .84], [1, 5, 1, .75], [1, 9, -1, .79], [1, 12, -3, .83],
+      [2, 0, -3, .87], [2, 3, 0, .78], [2, 6, 2, .82], [2, 11, 6, .9],
+      [3, 2, 4, .83], [3, 6, 1, .77], [3, 10, 0, .88],
+    ],
+    [
+      [0, 0, -3, .89], [0, 3, 0, .78], [0, 6, 2, .82], [0, 11, 5, .88],
+      [1, 1, 3, .84], [1, 5, 1, .75], [1, 9, -1, .79], [1, 12, -3, .83],
+      [2, 0, -3, .87], [2, 3, 0, .78], [2, 7, 4, .83], [2, 11, 6, .9],
+      [3, 0, 5, .86], [3, 4, 3, .79], [3, 8, 1, .77], [3, 12, -2, .88],
+    ],
+  ],
+  [
+    [
+      [0, 2, 2, .85], [0, 6, 0, .78], [0, 9, -2, .82], [0, 13, 0, .85],
+      [1, 2, 3, .88], [1, 7, 5, .81], [1, 11, 3, .83],
+      [2, 2, 2, .85], [2, 6, 0, .78], [2, 9, -2, .82], [2, 13, -4, .87],
+      [3, 2, -2, .83], [3, 6, 0, .78], [3, 10, 2, .88],
+    ],
+    [
+      [0, 2, 2, .85], [0, 6, 0, .78], [0, 9, -2, .82], [0, 13, 0, .85],
+      [1, 2, 3, .88], [1, 7, 5, .81], [1, 11, 3, .83],
+      [2, 2, 2, .85], [2, 6, 0, .78], [2, 10, -3, .83], [2, 13, 0, .84],
+      [3, 2, 4, .85], [3, 6, 2, .8], [3, 10, -1, .88],
+    ],
+  ],
+  [
+    [
+      [0, 0, -1, .87], [0, 4, 2, .82], [0, 8, 4, .8], [0, 12, 2, .84],
+      [1, 0, 0, .83], [1, 5, -2, .78], [1, 8, 0, .79], [1, 12, 3, .86],
+      [2, 0, -1, .87], [2, 4, 2, .82], [2, 8, 5, .84], [2, 12, 3, .83],
+      [3, 0, 2, .82], [3, 5, 0, .79], [3, 9, -2, .88],
+    ],
+    [
+      [0, 0, -1, .87], [0, 4, 2, .82], [0, 8, 4, .8], [0, 12, 2, .84],
+      [1, 0, 0, .83], [1, 5, -2, .78], [1, 8, 0, .79], [1, 12, 3, .86],
+      [2, 0, -1, .87], [2, 4, 2, .82], [2, 8, 4, .82], [2, 12, 6, .86],
+      [3, 0, 4, .84], [3, 4, 2, .8], [3, 8, 0, .77], [3, 12, -1, .88],
+    ],
+  ],
+];
+
 const TEXTURES: Record<AmbientVariant, readonly (readonly TextureNote[])[]> = {
   'Cloud Drift': [[[12, 0, 1.1, .42], [52, 1, 1.3, .48]], [[8, 1, 1.15, .43], [46, 0, 1.25, .47]]],
   'Rain Window': [[[14, 0, .8, .47], [42, 1, 1.1, .52]], [[6, 1, 1, .46], [55, 0, .95, .5]]],
@@ -293,8 +352,36 @@ function performedEvent(
   };
 }
 
-/** Sparse, chord-aware notes whose contour and timing depend on the variant. */
+function lyricalMelodyEvent(composition: Composition, bar: number, position: number): MelodyEvent | null {
+  const motif = LYRICAL_MOTIFS[Math.floor(random01(composition.seed, 610) * LYRICAL_MOTIFS.length)];
+  const cycle = Math.floor(bar / 4);
+  const phrase = motif[(cycle + Math.floor(random01(composition.seed, 611) * 2)) % 2];
+  const index = phrase.findIndex(([phraseBar, onset]) => phraseBar === bar % 4 && onset === position);
+  if (index < 0) return null;
+
+  const [, , contour, strength] = phrase[index];
+  const chord = chordNotes(composition, bar);
+  const safe = safeChordTones(chord);
+  const classes = new Set((safe.length ? safe : chord).map((note) => note % 12));
+  const candidates = Array.from({ length: 18 }, (_, index) => index + 64)
+    .filter((note) => classes.has(note % 12));
+  const target = 71 + Math.floor(random01(composition.seed, 612) * 3) - 1 + contour;
+  const note = candidates.reduce((best, candidate) => {
+    const distance = Math.abs(candidate - target);
+    const bestDistance = Math.abs(best - target);
+    return distance < bestDistance || (distance === bestDistance &&
+      (contour >= 0 ? candidate > best : candidate < best)) ? candidate : best;
+  });
+  const currentStep = (bar % 4) * 16 + position;
+  const next = phrase[index + 1];
+  const nextStep = next ? next[0] * 16 + next[1] : 64;
+  const duration = Math.min(1.35, (nextStep - currentStep) * 15 / composition.bpm * .86);
+  return performedEvent(composition, bar, position, note, duration, strength, 620);
+}
+
+/** Chord-aware lead: an occasional sung motif or the variant's sparse notes. */
 export function ambientMelodyEvent(composition: Composition, bar: number, position: number): MelodyEvent | null {
+  if (composition.leadStyle === 'lyrical') return lyricalMelodyEvent(composition, bar, position);
   const variant = composition.ambientVariant;
   const cycle = Math.floor(bar / 4);
   const phrase = PHRASES[variant][(cycle + Math.floor(random01(composition.seed, 201) * 2)) % 2];

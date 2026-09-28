@@ -4,8 +4,10 @@ import {
   makeComposition, melodyNote, nextSeed, sectionEnergy, textureEvent,
 } from './composition';
 
-const onsets = (seed: number, firstBar: number, event: typeof ambientMelodyEvent) => {
+const onsets = (seed: number, firstBar: number, event: typeof ambientMelodyEvent,
+  leadStyle?: 'sparse' | 'lyrical') => {
   const composition = makeComposition(seed);
+  if (leadStyle) composition.leadStyle = leadStyle;
   return Array.from({ length: 64 }, (_, step) => {
     const bar = firstBar + Math.floor(step / 16);
     return event(composition, bar, step % 16) ? step : -1;
@@ -47,6 +49,9 @@ describe('Ambient composition', () => {
     expect(new Set(compositions.map((composition) => `${composition.key}:${composition.progression.join(',')}`)).size)
       .toBeGreaterThan(70);
     expect(new Set(compositions.map((composition) => composition.bpm)).size).toBeGreaterThan(20);
+    const leadStyles = compositions.map((composition) => composition.leadStyle);
+    expect(leadStyles.filter((style) => style === 'lyrical').length).toBeGreaterThan(300);
+    expect(leadStyles.filter((style) => style === 'sparse').length).toBeGreaterThan(300);
   });
 
   it('gives each variation distinct harmony or mode and a distinct phrase rhythm', () => {
@@ -57,16 +62,36 @@ describe('Ambient composition', () => {
       fingerprints.add(`${composition.scale.join(',')}:${composition.progression.join(',')}:${composition.bpm}`);
       const first = onsets(seed, 0, ambientMelodyEvent);
       const second = onsets(seed, 4, ambientMelodyEvent);
-      expect(first.length).toBeGreaterThanOrEqual(2);
-      expect(first.length).toBeLessThanOrEqual(5);
+      expect(first.length).toBeGreaterThanOrEqual(composition.leadStyle === 'lyrical' ? 14 : 2);
+      expect(first.length).toBeLessThanOrEqual(composition.leadStyle === 'lyrical' ? 16 : 5);
       expect(second).not.toEqual(first);
-      rhythms.add(first.join(','));
+      rhythms.add(onsets(seed, 0, ambientMelodyEvent, 'sparse').join(','));
       expect(onsets(seed, 0, textureEvent).length).toBeGreaterThan(0);
     }
     expect(fingerprints.size).toBe(AMBIENT_VARIANTS.length);
     expect(rhythms.size).toBe(AMBIENT_VARIANTS.length);
     expect(makeComposition(8).scale).toHaveLength(5); // Glass Garden is pentatonic.
     expect(makeComposition(4).scale).toContain(6); // Starlit Memory is Lydian.
+  });
+
+  it('repeats a singable hook while changing its answer in lyrical tracks', () => {
+    const lyricalSeeds = Array.from({ length: 120 }, (_, seed) => seed)
+      .filter((seed) => makeComposition(seed).leadStyle === 'lyrical');
+    expect(lyricalSeeds.length).toBeGreaterThan(20);
+    for (const seed of lyricalSeeds) {
+      const composition = makeComposition(seed);
+      const first = onsets(seed, 0, ambientMelodyEvent);
+      const answer = onsets(seed, 4, ambientMelodyEvent);
+      expect(first).toEqual(onsets(seed, 8, ambientMelodyEvent));
+      expect(first.filter((step) => step < 16)).toEqual(answer.filter((step) => step < 16));
+      expect(first).not.toEqual(answer);
+      const pitches = Array.from({ length: 64 }, (_, step) =>
+        ambientMelodyEvent(composition, Math.floor(step / 16), step % 16)?.note)
+        .filter((note): note is number => note !== undefined);
+      expect(new Set(pitches).size).toBeGreaterThanOrEqual(4);
+      expect(pitches.some((note, index) => index > 0 && note > pitches[index - 1])).toBe(true);
+      expect(pitches.some((note, index) => index > 0 && note < pitches[index - 1])).toBe(true);
+    }
   });
 
   it('keeps bass, pads, lead and responses in key without semitone clashes', () => {

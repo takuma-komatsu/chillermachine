@@ -1,5 +1,6 @@
 import {
   ambientMelodyEvent,
+  bassFifthNote,
   bassNote,
   chordNotes,
   makeComposition,
@@ -9,6 +10,7 @@ import {
   type AmbientVariant,
   type Composition,
 } from './composition';
+import { arrangementStep } from './arrangement';
 
 export type TrackInfo = { title: string; style: string; key: string; bpm: number; seed: number; ambientVariant: AmbientVariant };
 export type PlayerSnapshot = {
@@ -633,69 +635,25 @@ export class ChillerEngine {
     const bar = Math.floor(step / STEPS_PER_BAR);
     const position = step % STEPS_PER_BAR;
     const composition = session.composition;
-    const energy = sectionEnergy(composition, bar);
+    const arrangement = arrangementStep(composition, bar, position);
+    const energy = sectionEnergy(composition, bar) * arrangement.energy;
     const beat = 60 / composition.bpm;
-    const variant = ambientVariant(composition);
-    const chord = (duration: number, strength: number) =>
-      this.playChord(session, chordNotes(composition, bar), time, beat * duration, energy * strength);
-    const bass = (duration: number, strength: number) =>
-      this.playBass(session, bassNote(composition, bar, position), time, duration, energy * strength);
-    switch (variant) {
-      case 'Cloud Drift':
-        if (position === 0) {
-          chord(3.7, 0.9); bass(1.8, 0.75);
-          if (bar % 4 === 0) this.playKick(session, time, energy * 0.26);
-        }
-        break;
-      case 'Rain Window':
-        if (position === 0 || position === 8) chord(1.65, position === 0 ? 0.8 : 0.58);
-        if (position === 0) bass(1.45, 0.62);
-        if (position === 8 && bar % 2 === 0) bass(0.8, 0.34);
-        if (position === 0 && bar % 2 === 0) this.playKick(session, time, energy * 0.18);
-        break;
-      case 'Dawn Haze':
-        if (position === 0) { chord(3.85, 0.75); bass(2.7, 0.48); }
-        break;
-      case 'Blue Hour':
-        if (position === 0) { chord(3.55, 0.82); bass(2.15, 0.58); }
-        if (position === 12 && bar % 2 === 1) chord(0.8, 0.25);
-        break;
-      case 'Starlit Memory':
-        if (position === 0) { chord(3.3, 0.71); bass(1.9, 0.48); }
-        if (position === 10 && bar % 4 === 2) chord(1.1, 0.3);
-        break;
-      case 'Velvet Tide':
-        if (position === 0) { chord(3.9, 0.83); bass(3, 0.58); }
-        break;
-      case 'Faded Polaroid':
-        if (position === 0 || position === 10) chord(position === 0 ? 2.2 : 1.1, position === 0 ? 0.77 : 0.42);
-        if (position === 0) bass(1.6, 0.56);
-        break;
-      case 'Midnight Bloom':
-        if (position === 0) { chord(3.75, 0.83); bass(2.4, 0.56); }
-        if (position === 8 && bar % 2 === 1) chord(1.7, 0.32);
-        break;
-      case 'Glass Garden':
-        if (position === 0 || position === 8) chord(position === 0 ? 1.9 : 1.35, position === 0 ? 0.73 : 0.48);
-        if (position === 0) bass(1.25, 0.51);
-        break;
-      case 'Winter Light':
-        if (position === 0) { chord(3.75, 0.78); bass(2.25, 0.51); }
-        if (position === 12 && bar % 4 === 3) chord(0.7, 0.22);
-        break;
-      case 'Slow Orbit':
-        if (position === 0) { chord(3.9, 0.79); bass(2.9, 0.57); }
-        if (position === 8 && bar % 4 === 2) bass(1.3, 0.27);
-        break;
-      case 'Golden Echo':
-        if (position === 0 || position === 8) chord(position === 0 ? 2.3 : 1.35, position === 0 ? 0.76 : 0.41);
-        if (position === 0) bass(1.7, 0.51);
-        break;
+    const lyrical = composition.leadStyle === 'lyrical';
+    if (arrangement.chord) this.playChord(session, chordNotes(composition, bar), time,
+      beat * arrangement.chord.beats, energy * arrangement.chord.strength * (lyrical ? .75 : 1));
+    if (arrangement.bass) {
+      const note = arrangement.bass.tone === 'root'
+        ? bassNote(composition, bar, position) : bassFifthNote(composition, bar);
+      this.playBass(session, note, time, beat * arrangement.bass.beats, energy * arrangement.bass.strength);
     }
+    if (arrangement.kick) this.playKick(session, time, energy * arrangement.kick);
     const event = ambientMelodyEvent(composition, bar, position);
-    if (event) this.playMelody(session, event.note, time + event.offset, event.duration, energy * event.strength);
+    if (event && arrangement.leadLevel > 0) this.playMelody(session, event.note,
+      time + event.offset, event.duration,
+      energy * arrangement.leadLevel * (lyrical ? 1.5 : 1) * event.strength);
     const texture = textureEvent(composition, bar, position);
-    if (texture) this.playTexture(session, texture.note, time + texture.offset, texture.duration, energy * texture.strength);
+    if (texture) this.playTexture(session, texture.note, time + texture.offset, texture.duration,
+      energy * arrangement.textureLevel * (lyrical ? .7 : 1) * texture.strength);
   }
 
   private playTexture(session: TrackSession, note: number, at: number, duration: number, energy: number): void {

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChillerEngine } from './ChillerEngine';
-import { AMBIENT_VARIANTS, ambientMelodyEvent, makeComposition, textureEvent, type AmbientVariant, type Composition } from './composition';
+import { arrangementStep } from './arrangement';
+import { AMBIENT_VARIANTS, ambientMelodyEvent, bassFifthNote, chordNotes, makeComposition, textureEvent, type AmbientVariant, type Composition } from './composition';
 
 class FakeParam {
   value = 0;
@@ -163,6 +164,58 @@ describe('ChillerEngine scheduling', () => {
     expect(context.nodes.size).toBe(0);
   });
 
+  it('keeps a lyrical track bounded through its full arrangement arc', async () => {
+    const composition = Array.from({ length: 120 }, (_, seed) => makeComposition(seed))
+      .find((item) => item.ambientVariant === 'Glass Garden' && item.leadStyle === 'lyrical')!;
+    const engine = new ChillerEngine();
+    (engine as unknown as { composition: Composition }).composition = composition;
+    await engine.play();
+    const context = FakeAudioContext.instances[0];
+    const tick = (engine as unknown as { tick(): void }).tick.bind(engine);
+    const seconds = 48 * 4 * 60 / composition.bpm;
+    let peakSources = 0;
+    let peakNodes = 0;
+    for (let quarter = 1; quarter <= Math.ceil(seconds * 4); quarter++) {
+      context.advanceTo(quarter / 4);
+      tick();
+      peakSources = Math.max(peakSources, context.sources.size);
+      peakNodes = Math.max(peakNodes, context.nodes.size);
+    }
+    expect(context.orphanedFinishedSources).toBe(0);
+    expect(peakSources).toBeLessThan(40);
+    expect(peakNodes).toBeLessThan(100);
+    engine.dispose();
+    expect(context.sources.size).toBe(0);
+    expect(context.nodes.size).toBe(0);
+  });
+
+  it('plays the harmonic fifth after pad voicings invert in later sections', async () => {
+    const composition = makeComposition(0);
+    const bars = Array.from({ length: 320 }, (_, bar) => bar)
+      .filter((bar) => arrangementStep(composition, bar, 8).bass?.tone === 'fifth'
+        && chordNotes(composition, bar)[2] - 12 !== bassFifthNote(composition, bar));
+    const sections = [...new Set(bars.map((bar) => Math.floor(bar / 8)))];
+    expect(sections.length).toBeGreaterThanOrEqual(2);
+
+    const engine = new ChillerEngine();
+    (engine as unknown as { composition: Composition }).composition = composition;
+    await engine.play();
+    const internals = engine as unknown as {
+      sessions: unknown[];
+      scheduleStep(session: unknown, step: number, time: number): void;
+      playBass(session: unknown, note: number, at: number, duration: number, energy: number): void;
+    };
+    const bass = vi.spyOn(internals, 'playBass');
+    for (const section of sections.slice(0, 2)) {
+      const bar = bars.find((candidate) => Math.floor(candidate / 8) === section)!;
+      bass.mockClear();
+      internals.scheduleStep(internals.sessions[0], bar * 16 + 8, 10);
+      expect(bass).toHaveBeenCalledOnce();
+      expect(bass.mock.calls[0][1]).toBe(bassFifthNote(composition, bar));
+    }
+    engine.dispose();
+  });
+
   it.each(AMBIENT_VARIANTS)('gives %s a distinct sound, arrangement, and bounded graph', async (variant) => {
     const seed = AMBIENT_VARIANTS.indexOf(variant);
     const composition = makeComposition(seed);
@@ -206,15 +259,15 @@ describe('ChillerEngine scheduling', () => {
     for (let step = 0; step < 4 * 16; step++) {
       internals.scheduleStep(session, step, 10 + step * stepDuration);
     }
-    const expected = {
-      'Cloud Drift': [4, 4, 1], 'Rain Window': [8, 6, 2], 'Dawn Haze': [4, 4, 0],
-      'Blue Hour': [6, 4, 0], 'Starlit Memory': [5, 4, 0], 'Velvet Tide': [4, 4, 0],
-      'Faded Polaroid': [8, 4, 0], 'Midnight Bloom': [6, 4, 0], 'Glass Garden': [8, 4, 0],
-      'Winter Light': [5, 4, 0], 'Slow Orbit': [4, 5, 0], 'Golden Echo': [8, 4, 0],
-    } satisfies Record<AmbientVariant, [number, number, number]>;
-    expect([chord.mock.calls.length, bass.mock.calls.length, kick.mock.calls.length]).toEqual(expected[variant]);
+    const cues = Array.from({ length: 64 }, (_, step) =>
+      arrangementStep(composition, Math.floor(step / 16), step % 16));
+    expect([chord.mock.calls.length, bass.mock.calls.length, kick.mock.calls.length]).toEqual([
+      cues.filter((cue) => cue.chord).length,
+      cues.filter((cue) => cue.bass).length,
+      cues.filter((cue) => cue.kick).length,
+    ]);
     expect(melody).toHaveBeenCalledTimes(Array.from({ length: 64 }, (_, step) =>
-      ambientMelodyEvent(composition, Math.floor(step / 16), step % 16)).filter(Boolean).length);
+      ambientMelodyEvent(composition, Math.floor(step / 16), step % 16) && cues[step].leadLevel > 0).filter(Boolean).length);
     expect(texture).toHaveBeenCalledTimes(Array.from({ length: 64 }, (_, step) =>
       textureEvent(composition, Math.floor(step / 16), step % 16)).filter(Boolean).length);
     expect(melody.mock.calls.length).toBeGreaterThan(0);
