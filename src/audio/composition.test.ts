@@ -99,6 +99,9 @@ describe('Ambient composition', () => {
             expect(composition.scale).toContain(((event.note - composition.tonicMidi) % 12 + 12) % 12);
             expect(event.duration).toBeGreaterThan(0);
             expect(event.duration).toBeLessThanOrEqual((16 - position) * 15 / composition.bpm - .03);
+            expect(event.offset).toBeGreaterThanOrEqual(0);
+            expect(event.offset).toBeLessThanOrEqual(.035);
+            expect(event.duration + event.offset).toBeLessThanOrEqual((16 - position) * 15 / composition.bpm);
           }
           if (lead) {
             expect(lead.note).toBeGreaterThanOrEqual(64);
@@ -112,6 +115,22 @@ describe('Ambient composition', () => {
         }
       }
     }
+  });
+
+  it('varies repeated phrases with small, repeatable performance changes', () => {
+    const composition = makeComposition(0);
+    const repeatedEvents = Array.from({ length: 4 * 16 }, (_, step) => {
+      const bar = Math.floor(step / 16);
+      const position = step % 16;
+      return [ambientMelodyEvent(composition, bar, position),
+        ambientMelodyEvent(composition, bar + 8, position)] as const;
+    }).filter(([first, repeat]) => first !== null && repeat !== null);
+    expect(repeatedEvents.length).toBeGreaterThan(0);
+    expect(repeatedEvents.some(([first, repeat]) => first!.strength !== repeat!.strength)).toBe(true);
+
+    const responses = Array.from({ length: 32 * 16 }, (_, step) =>
+      textureEvent(composition, Math.floor(step / 16), step % 16)).filter((event) => event !== null);
+    expect(responses.some((event) => event.offset > 0)).toBe(true);
   });
 
   it('changes the gentle section dynamics without changing notes inside a section', () => {

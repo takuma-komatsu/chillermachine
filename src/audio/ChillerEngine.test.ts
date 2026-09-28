@@ -25,6 +25,8 @@ class FakeNode {
   attack = new FakeParam();
   release = new FakeParam();
   type = '';
+  curve: Float32Array | null = null;
+  oversample = 'none';
   disconnected = false;
   connections: FakeNode[] = [];
   connect<T extends FakeNode>(target: T): T { this.connections.push(target); return target; }
@@ -85,6 +87,7 @@ class FakeAudioContext {
     return panner;
   }
   createDynamicsCompressor(): FakeNode { return this.node(); }
+  createWaveShaper(): FakeNode { return this.node(); }
   createOscillator(): FakeSource {
     const oscillator = this.source();
     this.oscillators.push(oscillator);
@@ -282,6 +285,35 @@ describe('ChillerEngine scheduling', () => {
     expect(signatures.size).toBe(AMBIENT_VARIANTS.length);
     expect(leadTypes).toEqual(new Set(['sine', 'triangle']));
     expect(textureTypes).toEqual(new Set(['sine', 'triangle']));
+  });
+
+  it('layers three distinct noise beds through a shared tape tone and drive', async () => {
+    const signatures = new Set<string>();
+    for (const variant of AMBIENT_VARIANTS) {
+      const engine = new ChillerEngine();
+      (engine as unknown as { composition: Composition }).composition = makeComposition(AMBIENT_VARIANTS.indexOf(variant));
+      await engine.play();
+      const context = FakeAudioContext.instances.at(-1)!;
+      const beds = [...context.sources].filter((source) => source.loop);
+      expect(beds).toHaveLength(3);
+      const settings = beds.map((source) => {
+        const highpass = source.connections[0];
+        const lowpass = highpass.connections[0];
+        const gain = lowpass.connections[0];
+        expect(highpass.type).toBe('highpass');
+        expect(lowpass.type).toBe('lowpass');
+        expect(gain.gain.value).toBeGreaterThan(0);
+        return [highpass.frequency.value, lowpass.frequency.value, gain.gain.value];
+      });
+      signatures.add(JSON.stringify(settings));
+      const internals = engine as unknown as { master: FakeNode; tapeTone: FakeNode; tapeDrive: FakeNode };
+      expect(internals.master.connections).toContain(internals.tapeTone);
+      expect(internals.tapeTone.frequency.value).toBe(4500);
+      expect(internals.tapeDrive.curve).toHaveLength(1024);
+      engine.dispose();
+      expect(context.nodes.size).toBe(0);
+    }
+    expect(signatures.size).toBe(AMBIENT_VARIANTS.length);
   });
 
   it('recovers from a throttled timer without scheduling notes in the distant past', async () => {

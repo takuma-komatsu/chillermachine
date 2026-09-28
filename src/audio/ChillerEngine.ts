@@ -89,6 +89,23 @@ const AMBIENT_SOUND: Record<AmbientVariant, AmbientSound> = {
   'Golden Echo': { chordCutoff: 2050, melodyCutoff: 2750, bassCutoff: 445, drumLevel: 0, noiseCutoff: 2450, noiseLevel: 0.003, textureHighpass: 960, textureCutoff: 3250, roomCutoff: 2550, roomTimes: [0.22, 0.4], roomLevels: [0.18, 0.13], chordLayers: [['triangle', -4, 0.57], ['sine', 6, 0.32]], chordLevel: 0.033, chordAttack: 0.26, chordDecay: true, melodyType: 'sine', melodyLevel: 0.019, melodyAttack: 0.055, melodyHarmonic: [2, 0.14], textureType: 'triangle', textureLevel: 0.022, textureAttack: 0.045, bassType: 'sine', bassLevel: 0.086 },
 };
 
+// Three independent beds make the noise feel less like one static loop. Values
+// stay quiet beside the instruments, but remain audible in sparse passages.
+const NOISE_PROFILE: Record<AmbientVariant, { hiss: number; rain: number; rainCutoff: number; crackle: number }> = {
+  'Cloud Drift': { hiss: 2.4, rain: 0.009, rainCutoff: 1250, crackle: 0.002 },
+  'Rain Window': { hiss: 2.1, rain: 0.026, rainCutoff: 2900, crackle: 0.007 },
+  'Dawn Haze': { hiss: 2.7, rain: 0.007, rainCutoff: 1700, crackle: 0.002 },
+  'Blue Hour': { hiss: 3, rain: 0.012, rainCutoff: 1500, crackle: 0.003 },
+  'Starlit Memory': { hiss: 3.6, rain: 0.005, rainCutoff: 2400, crackle: 0.006 },
+  'Velvet Tide': { hiss: 3.1, rain: 0.014, rainCutoff: 950, crackle: 0.002 },
+  'Faded Polaroid': { hiss: 2.8, rain: 0.01, rainCutoff: 1800, crackle: 0.012 },
+  'Midnight Bloom': { hiss: 3.5, rain: 0.009, rainCutoff: 1050, crackle: 0.004 },
+  'Glass Garden': { hiss: 3.2, rain: 0.006, rainCutoff: 3100, crackle: 0.007 },
+  'Winter Light': { hiss: 3.4, rain: 0.01, rainCutoff: 2100, crackle: 0.003 },
+  'Slow Orbit': { hiss: 3.8, rain: 0.016, rainCutoff: 900, crackle: 0.002 },
+  'Golden Echo': { hiss: 3, rain: 0.008, rainCutoff: 2300, crackle: 0.009 },
+};
+
 function ambientVariant(composition: Composition): AmbientVariant {
   return composition.ambientVariant;
 }
@@ -120,12 +137,51 @@ function createNoiseBuffer(context: AudioContext): AudioBuffer {
   return buffer;
 }
 
+function createRainBuffer(context: AudioContext): AudioBuffer {
+  const length = Math.floor(context.sampleRate * 13.7);
+  const buffer = context.createBuffer(1, length, context.sampleRate);
+  const samples = buffer.getChannelData(0);
+  let state = 0x4a3b2c1d;
+  let droplet = 0;
+  for (let i = 0; i < length; i++) {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    const random = state / 0x100000000;
+    if (random < 0.0007) droplet = 0.5 + random * 400;
+    droplet *= 0.998;
+    const t = i / context.sampleRate;
+    const swell = 0.35 + 0.2 * Math.sin(t * 0.71) + 0.16 * Math.sin(t * 1.37 + 1.2);
+    const edge = Math.min(1, i / (context.sampleRate * 0.04), (length - i) / (context.sampleRate * 0.04));
+    samples[i] = (random * 2 - 1) * (swell + droplet) * Math.max(0, edge);
+  }
+  return buffer;
+}
+
+function createCrackleBuffer(context: AudioContext): AudioBuffer {
+  const length = Math.floor(context.sampleRate * 17.3);
+  const buffer = context.createBuffer(1, length, context.sampleRate);
+  const samples = buffer.getChannelData(0);
+  let state = 0x71342a9f;
+  for (let i = 0; i < length; i++) {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    if (state / 0x100000000 >= 0.00013) continue;
+    const amplitude = (state & 1 ? 1 : -1) * (0.3 + ((state >>> 8) & 255) / 365);
+    for (let n = 0; n < 80 && i + n < length; n++) {
+      samples[i + n] += amplitude * Math.exp(-n / 13) * Math.sin(n * 0.43);
+    }
+  }
+  return buffer;
+}
+
 /** A self-contained procedural Ambient player. Call dispose when leaving the page. */
 export class ChillerEngine {
   private context: AudioContext | null = null;
   private master: GainNode | null = null;
+  private tapeTone: BiquadFilterNode | null = null;
+  private tapeDrive: WaveShaperNode | null = null;
   private limiter: DynamicsCompressorNode | null = null;
   private noise: AudioBuffer | null = null;
+  private rain: AudioBuffer | null = null;
+  private crackle: AudioBuffer | null = null;
   private sessions: TrackSession[] = [];
   private timer: ReturnType<typeof setInterval> | null = null;
   private listeners = new Set<(snapshot: PlayerSnapshot) => void>();
@@ -265,11 +321,17 @@ export class ChillerEngine {
     for (const session of [...this.sessions]) this.stopSession(session);
     this.master?.disconnect();
     this.master = null;
+    this.tapeTone?.disconnect();
+    this.tapeTone = null;
+    this.tapeDrive?.disconnect();
+    this.tapeDrive = null;
     this.limiter?.disconnect();
     this.limiter = null;
     if (this.context) void this.context.close().catch(() => {});
     this.context = null;
     this.noise = null;
+    this.rain = null;
+    this.crackle = null;
     this.listeners.clear();
   }
 
@@ -304,17 +366,33 @@ export class ChillerEngine {
     const context = new AudioContext({ latencyHint: 'interactive' });
     const master = context.createGain();
     master.gain.value = 0;
+    const tapeTone = context.createBiquadFilter();
+    tapeTone.type = 'lowpass';
+    tapeTone.frequency.value = 4500;
+    tapeTone.Q.value = 0.5;
+    const tapeDrive = context.createWaveShaper();
+    const curve = new Float32Array(1024);
+    for (let i = 0; i < curve.length; i++) {
+      const input = i / (curve.length - 1) * 2 - 1;
+      curve[i] = Math.tanh(input * 2.2) / 2.2;
+    }
+    tapeDrive.curve = curve;
+    tapeDrive.oversample = '2x';
     const limiter = context.createDynamicsCompressor();
     limiter.threshold.value = -18;
     limiter.knee.value = 18;
     limiter.ratio.value = 3;
     limiter.attack.value = 0.01;
     limiter.release.value = 0.25;
-    master.connect(limiter).connect(context.destination);
+    master.connect(tapeTone).connect(tapeDrive).connect(limiter).connect(context.destination);
     this.context = context;
     this.master = master;
+    this.tapeTone = tapeTone;
+    this.tapeDrive = tapeDrive;
     this.limiter = limiter;
     this.noise = createNoiseBuffer(context);
+    this.rain = createRainBuffer(context);
+    this.crackle = createCrackleBuffer(context);
     return context;
   }
 
@@ -391,20 +469,32 @@ export class ChillerEngine {
   private startHiss(session: TrackSession, startTime: number): void {
     const context = this.context!;
     const sound = AMBIENT_SOUND[ambientVariant(session.composition)];
-    const source = context.createBufferSource();
-    source.buffer = this.noise;
-    source.loop = true;
-    const lowpass = context.createBiquadFilter();
-    lowpass.type = 'lowpass';
-    lowpass.frequency.value = sound.noiseCutoff;
-    const gain = context.createGain();
-    gain.gain.value = sound.noiseLevel;
-    source.connect(lowpass).connect(gain).connect(session.gain);
-    this.trackSource(session, source, () => {
-      lowpass.disconnect();
-      gain.disconnect();
-    });
-    source.start(startTime);
+    const profile = NOISE_PROFILE[ambientVariant(session.composition)];
+    const beds = [
+      { buffer: this.noise, level: sound.noiseLevel * profile.hiss, cutoff: sound.noiseCutoff, highpass: 550 },
+      { buffer: this.rain, level: profile.rain, cutoff: profile.rainCutoff, highpass: 160 },
+      { buffer: this.crackle, level: profile.crackle, cutoff: 3400, highpass: 900 },
+    ];
+    for (const bed of beds) {
+      const source = context.createBufferSource();
+      source.buffer = bed.buffer;
+      source.loop = true;
+      const highpass = context.createBiquadFilter();
+      highpass.type = 'highpass';
+      highpass.frequency.value = bed.highpass;
+      const lowpass = context.createBiquadFilter();
+      lowpass.type = 'lowpass';
+      lowpass.frequency.value = bed.cutoff;
+      const gain = context.createGain();
+      gain.gain.value = bed.level;
+      source.connect(highpass).connect(lowpass).connect(gain).connect(session.gain);
+      this.trackSource(session, source, () => {
+        highpass.disconnect();
+        lowpass.disconnect();
+        gain.disconnect();
+      });
+      source.start(startTime);
+    }
   }
 
   private trackSource(session: TrackSession, source: AudioScheduledSourceNode, cleanup: () => void): void {
@@ -542,9 +632,9 @@ export class ChillerEngine {
         break;
     }
     const event = ambientMelodyEvent(composition, bar, position);
-    if (event) this.playMelody(session, event.note, time, event.duration, energy * event.strength);
+    if (event) this.playMelody(session, event.note, time + event.offset, event.duration, energy * event.strength);
     const texture = textureEvent(composition, bar, position);
-    if (texture) this.playTexture(session, texture.note, time, texture.duration, energy * texture.strength);
+    if (texture) this.playTexture(session, texture.note, time + texture.offset, texture.duration, energy * texture.strength);
   }
 
   private playTexture(session: TrackSession, note: number, at: number, duration: number, energy: number): void {

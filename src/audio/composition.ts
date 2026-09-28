@@ -198,7 +198,7 @@ export function melodyNote(composition: Composition, bar: number, beat: number):
   return note;
 }
 
-export type MelodyEvent = { note: number; duration: number; strength: number };
+export type MelodyEvent = { note: number; duration: number; strength: number; offset: number };
 type PhraseNote = readonly [bar: number, position: number, tone: number, duration: number, strength: number];
 type TextureNote = readonly [step: number, tone: number, duration: number, strength: number];
 
@@ -277,6 +277,22 @@ function safeChordTones(chord: number[]): number[] {
   }));
 }
 
+/** Small, repeatable performance changes keep a four-bar loop from sounding quantized. */
+function performedEvent(
+  composition: Composition, bar: number, position: number,
+  note: number, duration: number, strength: number, voice: number,
+): MelodyEvent {
+  const variation = random01(composition.seed, bar, position, voice);
+  const length = duration * (.92 + variation * .16);
+  const barRoom = (16 - position) * 15 / composition.bpm - .035;
+  return {
+    note,
+    duration: Math.min(length, barRoom),
+    strength: strength * (.86 + random01(composition.seed, bar, position, voice + 1) * .24),
+    offset: position === 0 ? 0 : .01 + random01(composition.seed, bar, position, voice + 2) * .025,
+  };
+}
+
 /** Sparse, chord-aware notes whose contour and timing depend on the variant. */
 export function ambientMelodyEvent(composition: Composition, bar: number, position: number): MelodyEvent | null {
   const variant = composition.ambientVariant;
@@ -291,8 +307,7 @@ export function ambientMelodyEvent(composition: Composition, bar: number, positi
   let note = notes[toneIndex % notes.length];
   while (note < 64) note += 12;
   while (note > 81) note -= 12;
-  const barRoom = (16 - position) * 15 / composition.bpm - .035;
-  return { note, duration: Math.min(duration, barRoom), strength };
+  return performedEvent(composition, bar, position, note, duration, strength, 220);
 }
 
 /** High, quiet responses that avoid the lead and every pad semitone clash. */
@@ -308,8 +323,7 @@ export function textureEvent(composition: Composition, bar: number, position: nu
   if (!notes.length) return null;
   const [, tone, duration, strength] = event;
   const note = notes[(tone + Math.floor(random01(composition.seed, phrase, 411) * 2)) % notes.length];
-  const barRoom = (16 - position) * 15 / composition.bpm - .035;
-  return { note, duration: Math.min(duration, barRoom), strength };
+  return performedEvent(composition, bar, position, note, duration, strength, 430);
 }
 
 export function sectionEnergy(composition: Composition, bar: number): number {
